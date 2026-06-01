@@ -3,24 +3,42 @@ from plumbum import FG, local
 from plumbum.cmd import date, docker
 
 # Check environment variables are present
+DOCKER_PLATFORM = local.env.get("DOCKER_PLATFORM", "linux/amd64")
 DOCKER_TAG = local.env["DOCKER_TAG"]
+BASE_TAG = local.env.get("BASE_TAG", DOCKER_TAG)
+REPO = local.env["DOCKER_REPO"]
 COMMIT = local.env.get("GIT_SHA1")
 DATE = date("--rfc-3339", "ns")
-
-# Build image
-(
-    docker[
-        "image",
-        "build",
-        "--build-arg",
-        "VCS_REF={}".format(COMMIT),
-        "--build-arg",
-        "BUILD_DATE={}".format(DATE),
-        "--build-arg",
-        "BASE_TAG={}".format(DOCKER_TAG),
-        "--tag",
-        "tecnativa/postgres-autoconf:{}".format(DOCKER_TAG),
-        ".",
-    ]
-    & FG
+LOCAL_REGISTRY = local.env.get("LOCAL_REGISTRY")
+IMAGE = (
+    "%s/%s:%s" % (LOCAL_REGISTRY, REPO, DOCKER_TAG)
+    if LOCAL_REGISTRY
+    else "%s:%s" % (REPO, DOCKER_TAG)
 )
+PLATFORMS = [p.strip() for p in DOCKER_PLATFORM.split(",") if p.strip()]
+
+build = docker[
+    "buildx",
+    "build",
+    "--platform",
+    DOCKER_PLATFORM,
+    "--build-arg",
+    "VCS_REF={}".format(COMMIT),
+    "--build-arg",
+    "BUILD_DATE={}".format(DATE),
+    "--build-arg",
+    "BASE_TAG={}".format(BASE_TAG),
+    "--tag",
+    IMAGE,
+    ".",
+]
+if LOCAL_REGISTRY:
+    build = build["--push"]
+elif len(PLATFORMS) == 1:
+    build = build["--load"]
+else:
+    raise SystemExit(
+        "Multi-platform builds require LOCAL_REGISTRY; "
+        "set DOCKER_PLATFORM to one value for local --load builds."
+    )
+(build & FG)

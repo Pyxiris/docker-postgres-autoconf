@@ -25,8 +25,17 @@ jobs:
       - uses: pre-commit/action@v1.0.1
 
   build-test-push:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     needs: pre-commit
+    permissions:
+      contents: read
+      packages: write
+    services:
+      registry:
+        image: registry:3
+        ports:
+          - 5000:5000
     strategy:
       fail-fast: false
       matrix:
@@ -42,43 +51,55 @@ jobs:
           - "10"
           - "9.6"
     env:
+      DOCKER_PLATFORM: linux/amd64,linux/arm64
+      LOCAL_REGISTRY: localhost:5000
       # Indicates what's the equivalent to tecnativa/postgres-autoconf:latest image
       LATEST_RELEASE: "18-alpine"
-      DOCKER_REPO: tecnativa/postgres-autoconf
-      DOCKER_TAG: ${{ matrix.pg_version }}-alpine
+      DOCKER_REPO: ${{ github.repository == 'Tecnativa/docker-postgres-autoconf' && 'tecnativa/postgres-autoconf' || github.repository }}
+      BASE_TAG: ${{ matrix.pg_version }}-alpine
+      DOCKER_TAG: ${{ github.event_name == 'pull_request' && format('{0}-test-pr{1}', matrix.pg_version, github.event.number) || format('{0}-alpine', matrix.pg_version) }}
       GIT_SHA1: ${{ github.sha }}
-      IS_PR: ${{ github.event_name == 'pull_request' }}
+      # Github does not allow evaluating a secret in an if condition, so we need to set them as environment variables
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_LOGIN: ${{ secrets.DOCKERHUB_LOGIN }}
     steps:
+      # Image repo names have to be lowercase.
+      - name: Lowercase image repository name
+        run: |
+            DOCKER_REPO=${DOCKER_REPO,,}
+            echo "DOCKER_REPO=$DOCKER_REPO" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
       - run: pip install -r tests/ci-requirements.txt
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: network=host
       # Build images
-      - run: ./hooks/build
+      - name: Build images
+        run: ./hooks/build
       # Test
-      - run: python -m unittest tests.test -v
-      - name: Set Docker Tag
+      - name: Test each platform
         run: |
-          if [ "${{ env.IS_PR }}" = "true" ]; then
-            echo "DOCKER_TAG=${{ matrix.pg_version }}-test-pr${{ github.event.number }}" >> $GITHUB_ENV
-          else
-            echo "DOCKER_TAG=${{ matrix.pg_version }}-alpine" >> $GITHUB_ENV
-          fi
-      - name: Tag Docker Image for PR
-        if: env.IS_PR
-        run: docker tag ${{ env.DOCKER_REPO }}:${{ matrix.pg_version }}-alpine ${{ env.DOCKER_REPO }}:${{ env.DOCKER_TAG }}
+          IFS=',' read -ra PLATFORMS <<< "$DOCKER_PLATFORM"
+          for platform in "${PLATFORMS[@]}"; do
+            echo "Testing platform: $platform"
+            TEST_PLATFORM="$platform" python -m unittest tests.test -v
+          done
       # Push
       - name: Push Docker Image to Docker Hub
-        if: github.repository == 'Tecnativa/docker-postgres-autoconf' && (github.ref == 'refs/heads/master' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+        if: env.DOCKERHUB_TOKEN && env.DOCKERHUB_LOGIN
         env:
           REGISTRY_HOST: docker.io
-          REGISTRY_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_LOGIN }}
+          REGISTRY_TOKEN: ${{ env.DOCKERHUB_TOKEN }}
+          REGISTRY_USERNAME: ${{ env.DOCKERHUB_LOGIN }}
         run: ./hooks/push
       - name: Push Docker Image to GitHub Registry
-        if: github.repository == 'Tecnativa/docker-postgres-autoconf' && (github.ref == 'refs/heads/master' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
         env:
           REGISTRY_HOST: ghcr.io
-          REGISTRY_TOKEN: ${{ secrets.BOT_TOKEN }}
-          REGISTRY_USERNAME: ${{ secrets.BOT_LOGIN }}
+          REGISTRY_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          REGISTRY_USERNAME: ${{ secrets.BOT_LOGIN || github.repository_owner }}
         run: ./hooks/push

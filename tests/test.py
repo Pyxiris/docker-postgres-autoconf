@@ -23,11 +23,18 @@ class PostgresAutoconfCase(unittest.TestCase):
     """Test behavior for this docker image"""
 
     @classmethod
+    def _platform_args(cls):
+        platform = os.environ.get("TEST_PLATFORM")
+        if platform:
+            return ("--platform", platform)
+        return ()
+
+    @classmethod
     def setUpClass(cls):
-        with local.cwd(local.cwd / ".."):
-            print("Building image")
-            local["./hooks/build"] & FG
-        cls.image = f"tecnativa/postgres-autoconf:{local.env['DOCKER_TAG']}"
+        registry = local.env.get("LOCAL_REGISTRY")
+        repo = local.env.get("DOCKER_REPO", "tecnativa/postgres-autoconf")
+        tag = local.env["DOCKER_TAG"]
+        cls.image = f"{registry}/{repo}:{tag}" if registry else f"{repo}:{tag}"
         cls.cert_files = ("client.ca.cert.pem", "server.cert.pem", "server.key.pem")
         return super().setUpClass()
 
@@ -56,7 +63,7 @@ class PostgresAutoconfCase(unittest.TestCase):
         # The 1st test could fail while postgres boots
         for attempt in range(10):
             try:
-                time.sleep(5)
+                time.sleep(15)
                 # Test local connections via unix socket work
                 self.assertEqual(
                     "1\n",
@@ -75,13 +82,13 @@ class PostgresAutoconfCase(unittest.TestCase):
                         "test_user",
                     ),
                 )
-            except AssertionError:
+            except (AssertionError, ProcessExecutionError):
                 if attempt < 9:
                     print("Failure number {}. Retrying...".format(attempt))
                 else:
                     raise
             else:
-                continue
+                return
 
     def _check_password_auth(self, host=None):
         """Test connection with password auth work fine."""
@@ -93,6 +100,7 @@ class PostgresAutoconfCase(unittest.TestCase):
             docker(
                 "container",
                 "run",
+                *self._platform_args(),
                 "--network",
                 "lan",
                 "-e",
@@ -126,6 +134,7 @@ class PostgresAutoconfCase(unittest.TestCase):
             docker(
                 "container",
                 "run",
+                *self._platform_args(),
                 "--network",
                 "wan",
                 "-e",
@@ -163,6 +172,7 @@ class PostgresAutoconfCase(unittest.TestCase):
                 self.postgres_container = docker(
                     "container",
                     "run",
+                    *self._platform_args(),
                     "-d",
                     "--network",
                     "lan",
@@ -198,6 +208,7 @@ class PostgresAutoconfCase(unittest.TestCase):
                 self.postgres_container = docker(
                     "container",
                     "run",
+                    *self._platform_args(),
                     "-d",
                     "--network",
                     "lan",
@@ -221,6 +232,7 @@ class PostgresAutoconfCase(unittest.TestCase):
         self.postgres_container = docker(
             "container",
             "run",
+            *self._platform_args(),
             "-d",
             "--network",
             "lan",
@@ -244,6 +256,7 @@ class PostgresAutoconfCase(unittest.TestCase):
         self.postgres_container = docker(
             "container",
             "run",
+            *self._platform_args(),
             "-d",
             "--network",
             "lan",
@@ -271,6 +284,7 @@ class PostgresAutoconfCase(unittest.TestCase):
         self.postgres_container = docker(
             "container",
             "run",
+            *self._platform_args(),
             "-d",
             "--network",
             "lan",
@@ -312,6 +326,7 @@ class PostgresAutoconfCase(unittest.TestCase):
         # Start the Postgres container with HBA_EXTRA_RULES
         self.postgres_container = docker(
             "run",
+            *self._platform_args(),
             "-d",
             "--name",
             "postgres_test_hba_extra_rules",
