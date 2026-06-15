@@ -7,10 +7,20 @@ REPO = local.env["DOCKER_REPO"]
 SUFFIX = local.env.get("DOCKER_REPO_SUFFIX", "")
 VERSION = local.env["DOCKER_TAG"]
 
-# Log all locally available images; will help to pin images
-docker["image", "ls", "--digests", REPO] & FG
 
-# Login in Docker Hub
+def image_ref(registry, tag):
+    return "%s/%s%s:%s" % (registry, REPO, SUFFIX, tag)
+
+
+source = image_ref(local.env["LOCAL_REGISTRY"], VERSION)
+dest_tags = [image_ref(REGISTRY, VERSION)]
+if VERSION == local.env.get("LATEST_RELEASE"):
+    latest = "alpine" if VERSION.endswith("-alpine") else "latest"
+    dest_tags.append(image_ref(REGISTRY, latest))
+
+docker["buildx", "imagetools", "inspect", source] & FG
+
+# Login in Docker Hub or ghcr
 docker(
     "login",
     "--username",
@@ -20,13 +30,7 @@ docker(
     REGISTRY,
 )
 
-# Push built images
-local_image = "%s:%s" % (REPO, VERSION)
-public_image = "%s/%s%s:%s" % (REGISTRY, REPO, SUFFIX, VERSION)
-docker["image", "tag", local_image, public_image] & FG
-docker["image", "push", public_image] & FG
-if VERSION == local.env.get("LATEST_RELEASE"):
-    latest_version = "alpine" if VERSION.endswith("-alpine") else "latest"
-    public_image = "%s/%s%s:%s" % (REGISTRY, REPO, SUFFIX, latest_version)
-    docker["image", "tag", local_image, public_image] & FG
-    docker["image", "push", public_image] & FG
+promote = docker["buildx", "imagetools", "create"]
+for dest in dest_tags:
+    promote = promote["-t", dest]
+(promote[source] & FG)
