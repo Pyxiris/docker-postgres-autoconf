@@ -19,8 +19,11 @@ ENV CERTS="{}" \
     WAN_USERS='["all"]' \
     HBA_EXTRA_RULES=""
 RUN apk add --no-cache python3 py3-netifaces \
- && if [ "${PG_MAJOR:-0}" -ge 12 ]; then \
-        apk add --no-cache --virtual .pgvector-build build-base clang19 llvm19 linux-headers ca-certificates; \
+ && if [ "${PG_MAJOR:-0}" -ge 13 ]; then \
+        PG_CLANG="$(pg_config --configure | tr "'" "\n" | sed -n 's/^CLANG=clang-//p')"; \
+        PG_LLVM="$(pg_config --configure | tr "'" "\n" | sed -n 's#^LLVM_CONFIG=/usr/lib/llvm\([0-9][0-9]*\)/bin/llvm-config#\1#p')"; \
+        test -n "${PG_CLANG}" && test -n "${PG_LLVM}" && test "${PG_CLANG}" = "${PG_LLVM}"; \
+        apk add --no-cache --virtual .pgvector-build build-base linux-headers ca-certificates "clang${PG_CLANG}" "llvm${PG_LLVM}"; \
         wget -qO- "https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.tar.gz" \
           | tar -xz -C /tmp; \
         cd "/tmp/pgvector-${PGVECTOR_VERSION}" \

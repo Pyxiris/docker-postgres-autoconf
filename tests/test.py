@@ -356,6 +356,73 @@ class PostgresAutoconfCase(unittest.TestCase):
         for rule in hba_extra_rules:
             self.assertIn(rule, hba_conf)
 
+    def test_pgvector_extension(self):
+        """Test that pgvector is installed and works."""
+        if float(local.env["DOCKER_TAG"].split("-")[0]) < 13:
+            self.skipTest("pgvector not built for PostgreSQL < 13")
+        self.postgres_container = docker(
+            "container",
+            "run",
+            "-d",
+            "--network",
+            "lan",
+            "-e",
+            "POSTGRES_DB=test_db",
+            "-e",
+            "POSTGRES_PASSWORD=test_password",
+            "-e",
+            "POSTGRES_USER=test_user",
+            CONF_EXTRA,
+            self.image,
+        ).strip()
+        self._check_local_connection()
+        self.assertEqual(
+            "vector\n",
+            docker(
+                "container",
+                "exec",
+                self.postgres_container,
+                "psql",
+                "--command",
+                "SELECT name FROM pg_available_extensions WHERE name = 'vector';",
+                "--dbname",
+                "test_db",
+                "--no-align",
+                "--tuples-only",
+                "--username",
+                "test_user",
+            ),
+        )
+        docker(
+            "container",
+            "exec",
+            self.postgres_container,
+            "psql",
+            "--command",
+            "CREATE EXTENSION vector;",
+            "--dbname",
+            "test_db",
+            "--username",
+            "test_user",
+        )
+        self.assertEqual(
+            "1\n",
+            docker(
+                "container",
+                "exec",
+                self.postgres_container,
+                "psql",
+                "--command",
+                "SELECT ('[1,2,3]'::vector <-> '[1,2,4]'::vector)::int;",
+                "--dbname",
+                "test_db",
+                "--no-align",
+                "--tuples-only",
+                "--username",
+                "test_user",
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
